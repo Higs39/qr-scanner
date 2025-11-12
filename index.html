@@ -11,6 +11,19 @@
     table { border-collapse:collapse; width:100%; margin-top:12px; }
     th,td { border:1px solid #ddd; padding:6px; font-size:14px; }
     th { background:#f6f6f6; }
+    /* Modal */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      display: none; align-items: center; justify-content: center; z-index: 9999;
+    }
+    .modal {
+      background: #fff; width: min(92vw, 420px); border-radius: 10px; padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    .modal h3 { margin: 0 0 10px 0; }
+    .modal label { display:block; margin:8px 0 4px; font-size: 14px; }
+    .modal input { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; }
+    .modal .row { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
   </style>
 </head>
 <body>
@@ -20,6 +33,7 @@
     <button id="start" disabled>Start camera</button>
     <button id="stop" disabled>Stop camera</button>
     <button id="clear">Clear saved scans</button>
+    <button id="changeIds">Change Scanner/Station</button>
   </div>
 
   <div id="reader"></div>
@@ -30,15 +44,33 @@
   <h3>Saved scans</h3>
   <table id="tbl">
     <thead>
-      <tr><th>#</th><th>Payload</th><th>First seen</th><th>Last seen</th><th>Count</th></tr>
+      <tr><th>#</th><th>Payload</th><th>Scanner ID</th><th>Station ID</th><th>First seen</th><th>Last seen</th><th>Count</th></tr>
     </thead>
     <tbody></tbody>
   </table>
 
   <div id="log">Loading QR library…</div>
 
+  <!-- One-time ID modal -->
+  <div id="idModalBackdrop" class="modal-backdrop">
+    <div class="modal">
+      <h3>Set device identity (one-time)</h3>
+      <label for="scannerIdInput">Scanner ID</label>
+      <input id="scannerIdInput" placeholder="e.g. PH-01" />
+      <label for="stationIdInput">Station ID</label>
+      <input id="stationIdInput" placeholder="e.g. ST-01" />
+      <div class="row">
+        <button id="cancelIds">Cancel</button>
+        <button id="saveIds">Save</button>
+      </div>
+      <div style="font-size:12px;color:#666;margin-top:6px;">
+        Saved to this device only. You can change it later via “Change Scanner/Station”.
+      </div>
+    </div>
+  </div>
+
   <script>
-    // Robust loader with CDN fallbacks
+    // Robust CDN loader
     const CDN_SOURCES = [
       "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
       "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
@@ -49,17 +81,22 @@
     const startBtn = document.getElementById("start");
     const stopBtn  = document.getElementById("stop");
     const clearBtn = document.getElementById("clear");
+    const changeIdsBtn = document.getElementById("changeIds");
     const lastDiv  = document.getElementById("last");
     const logDiv   = document.getElementById("log");
     const tbody    = document.querySelector("#tbl tbody");
+    const idModalBackdrop = document.getElementById("idModalBackdrop");
+    const scannerIdInput = document.getElementById("scannerIdInput");
+    const stationIdInput = document.getElementById("stationIdInput");
+    const cancelIdsBtn = document.getElementById("cancelIds");
+    const saveIdsBtn = document.getElementById("saveIds");
 
     function log(t){ logDiv.textContent = t; }
 
     function loadScript(src){
       return new Promise((resolve, reject) => {
         const s = document.createElement("script");
-        s.src = src;
-        s.async = true;
+        s.src = src; s.async = true;
         s.onload = () => resolve(src);
         s.onerror = () => reject(new Error("failed: " + src));
         document.head.appendChild(s);
@@ -77,40 +114,80 @@
           }
         } catch {}
       }
-      log("Failed to load QR library from all CDNs. Disable ad-blockers or test in incognito.");
+      log("Failed to load QR library from all CDNs. Try incognito without extensions.");
+    })();
+  </script>
+
+  <script>
+    // Storage keys
+    const STORE_KEY = "qr_scans_v2";            // includes ids per row
+    const IDS_KEY   = "device_ids_v1";          // {scanner_id, station_id}
+
+    // Load/Save helpers
+    function loadStore(){ try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch { return {}; } }
+    function saveStore(obj){ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }
+    function loadIds(){ try { return JSON.parse(localStorage.getItem(IDS_KEY) || "{}"); } catch { return {}; } }
+    function saveIds(ids){ localStorage.setItem(IDS_KEY, JSON.stringify(ids)); }
+
+    // Pre-fill IDs from URL once if present
+    (function bootstrapFromUrl(){
+      const u = new URL(location.href);
+      const sc = u.searchParams.get("scanner");
+      const st = u.searchParams.get("station");
+      const cur = loadIds();
+      const next = { scanner_id: sc || cur.scanner_id || "", station_id: st || cur.station_id || "" };
+      saveIds(next);
     })();
 
-    // ---- Storage helpers ----
-    const STORE_KEY = "qr_scans_v1";
-    function loadStore() {
-      try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); }
-      catch { return {}; }
-    }
-    function saveStore(obj) {
-      localStorage.setItem(STORE_KEY, JSON.stringify(obj));
-    }
-
-    function render() {
+    // Table render
+    function render(){
       const db = loadStore();
       const rows = Object.keys(db).sort();
       tbody.innerHTML = "";
-      rows.forEach((k,i)=>{
-        const r = db[k];
+      rows.forEach((payload,i)=>{
+        const r = db[payload];
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td>${i+1}</td>
-                        <td style="word-break:break-all">${k}</td>
-                        <td>${r.first_seen}</td>
-                        <td>${r.last_seen}</td>
-                        <td>${r.count}</td>`;
+        tr.innerHTML = `
+          <td>${i+1}</td>
+          <td style="word-break:break-all">${payload}</td>
+          <td>${r.scanner_id || ""}</td>
+          <td>${r.station_id || ""}</td>
+          <td>${r.first_seen}</td>
+          <td>${r.last_seen}</td>
+          <td>${r.count}</td>`;
         tbody.appendChild(tr);
       });
     }
     render();
 
-    // ---- Scanner lifecycle ----
+    // Modal helpers
+    function showIdModal(prefill={}) {
+      scannerIdInput.value = prefill.scanner_id || "";
+      stationIdInput.value = prefill.station_id || "";
+      idModalBackdrop.style.display = "flex";
+    }
+    function hideIdModal(){ idModalBackdrop.style.display = "none"; }
+
+    changeIdsBtn.onclick = () => {
+      showIdModal(loadIds());
+    };
+    cancelIdsBtn.onclick = hideIdModal;
+    saveIdsBtn.onclick = () => {
+      const scanner_id = scannerIdInput.value.trim();
+      const station_id = stationIdInput.value.trim();
+      if (!scanner_id || !station_id) { alert("Both IDs required."); return; }
+      saveIds({ scanner_id, station_id });
+      hideIdModal();
+      log(`Saved device identity → Scanner: ${scanner_id}, Station: ${station_id}`);
+      // If a scan was pending while we asked for IDs, process it now
+      if (pendingPayload) { processScan(pendingPayload); pendingPayload = null; }
+    };
+
+    // Scanner lifecycle
     let qr = null;
     let running = false;
     let debounceUntil = 0;
+    let pendingPayload = null; // holds first scan if IDs missing
 
     startBtn.onclick = async () => {
       try {
@@ -132,37 +209,65 @@
 
     stopBtn.onclick = async () => {
       if (!running) return;
-      try { await qr.stop(); await qr.clear(); }
-      catch(e){ /* ignore */ }
+      try { await qr.stop(); await qr.clear(); } catch(e){}
       running = false;
       startBtn.disabled = false;
       stopBtn.disabled  = true;
       log("Camera stopped.");
     };
 
-    function onDecoded(text) {
+    function onDecoded(text){
       const now = Date.now();
       if (now < debounceUntil) return;
       debounceUntil = now + 1200;
 
       const payload = text.trim();
+      const ids = loadIds();
+      if (!ids.scanner_id || !ids.station_id) {
+        // First time: prompt once, then process this same payload after save
+        pendingPayload = payload;
+        showIdModal();
+        return;
+      }
+      processScan(payload);
+    }
+
+    function processScan(payload){
       lastDiv.textContent = payload;
 
+      const ids = loadIds();
       const db = loadStore();
       const nowISO = new Date().toISOString();
 
       if (db[payload]) {
         db[payload].last_seen = nowISO;
         db[payload].count = (db[payload].count || 1) + 1;
-        saveStore(db);
-        render();
-        alert(`Seen before\n\n${payload}\nFirst: ${db[payload].first_seen}\nLast: ${db[payload].last_seen}\nCount: ${db[payload].count}`);
       } else {
-        db[payload] = { first_seen: nowISO, last_seen: nowISO, count: 1 };
-        saveStore(db);
-        render();
+        db[payload] = {
+          scanner_id: ids.scanner_id,
+          station_id: ids.station_id,
+          first_seen: nowISO,
+          last_seen: nowISO,
+          count: 1
+        };
+      }
+      saveStore(db);
+      render();
+
+      // Notify on repeat
+      if (db[payload].count > 1) {
+        alert(
+          `Seen before\n\n` +
+          `Payload: ${payload}\n` +
+          `Scanner: ${db[payload].scanner_id}\n` +
+          `Station: ${db[payload].station_id}\n` +
+          `First:   ${db[payload].first_seen}\n` +
+          `Last:    ${db[payload].last_seen}\n` +
+          `Count:   ${db[payload].count}`
+        );
+      } else {
         if (navigator.vibrate) navigator.vibrate(60);
-        log("Saved new QR payload.");
+        log(`Saved new QR with device identity → Scanner: ${ids.scanner_id}, Station: ${ids.station_id}`);
       }
     }
 
@@ -175,4 +280,3 @@
   </script>
 </body>
 </html>
-
