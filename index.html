@@ -17,7 +17,7 @@
   <h2>Simple QR Scanner</h2>
 
   <div>
-    <button id="start">Start camera</button>
+    <button id="start" disabled>Start camera</button>
     <button id="stop" disabled>Stop camera</button>
     <button id="clear">Clear saved scans</button>
   </div>
@@ -35,22 +35,16 @@
     <tbody></tbody>
   </table>
 
-  <div id="log"></div>
+  <div id="log">Loading QR library…</div>
 
-  <!-- Load the QR library FIRST -->
-  <script src="https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js"></script>
-
-  <!-- Your logic AFTER the library -->
   <script>
-    const STORE_KEY = "qr_scans_v1";
-
-    function loadStore() {
-      try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); }
-      catch { return {}; }
-    }
-    function saveStore(obj) {
-      localStorage.setItem(STORE_KEY, JSON.stringify(obj));
-    }
+    // Robust loader with CDN fallbacks
+    const CDN_SOURCES = [
+      "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
+      "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
+      "https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js",
+      "https://cdn.jsdelivr.net/npm/html5-qrcode/minified/html5-qrcode.min.js"
+    ];
 
     const startBtn = document.getElementById("start");
     const stopBtn  = document.getElementById("stop");
@@ -59,7 +53,42 @@
     const logDiv   = document.getElementById("log");
     const tbody    = document.querySelector("#tbl tbody");
 
-    function log(msg){ logDiv.textContent = msg; }
+    function log(t){ logDiv.textContent = t; }
+
+    function loadScript(src){
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve(src);
+        s.onerror = () => reject(new Error("failed: " + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    (async function ensureLib(){
+      for (const src of CDN_SOURCES) {
+        try {
+          await loadScript(src);
+          if (window.Html5Qrcode) {
+            log("QR library loaded from: " + src);
+            startBtn.disabled = false;
+            return;
+          }
+        } catch {}
+      }
+      log("Failed to load QR library from all CDNs. Disable ad-blockers or test in incognito.");
+    })();
+
+    // ---- Storage helpers ----
+    const STORE_KEY = "qr_scans_v1";
+    function loadStore() {
+      try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); }
+      catch { return {}; }
+    }
+    function saveStore(obj) {
+      localStorage.setItem(STORE_KEY, JSON.stringify(obj));
+    }
 
     function render() {
       const db = loadStore();
@@ -78,12 +107,14 @@
     }
     render();
 
+    // ---- Scanner lifecycle ----
     let qr = null;
     let running = false;
     let debounceUntil = 0;
 
     startBtn.onclick = async () => {
       try {
+        if (!window.Html5Qrcode) { log("Library not available."); return; }
         if (running) return;
         qr = new Html5Qrcode("reader");
         const cams = await Html5Qrcode.getCameras();
@@ -144,3 +175,4 @@
   </script>
 </body>
 </html>
+
