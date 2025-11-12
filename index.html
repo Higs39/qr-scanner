@@ -2,19 +2,19 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Simple QR Logger</title>
+  <title>QR Scanner</title>
   <style>
     body { font-family: system-ui, sans-serif; margin:16px; }
-    #reader { width: 100%; max-width: 520px; margin: 12px auto; }
-    #log { white-space: pre-wrap; background:#f5f5f5; padding:8px; }
-    button { padding:8px 12px; margin:6px 6px 6px 0; }
-    table { border-collapse: collapse; width:100%; margin-top:12px; }
-    th, td { border:1px solid #ddd; padding:6px; font-size:14px; }
+    #reader { width:100%; max-width:520px; margin:12px auto; }
+    button { padding:8px 12px; margin:6px 4px; }
+    #log { white-space:pre-wrap; background:#f5f5f5; padding:8px; }
+    table { border-collapse:collapse; width:100%; margin-top:12px; }
+    th,td { border:1px solid #ddd; padding:6px; font-size:14px; }
     th { background:#f6f6f6; }
   </style>
 </head>
 <body>
-  <h2>QR Scanner — Save & Recall</h2>
+  <h2>Simple QR Scanner</h2>
 
   <div>
     <button id="start">Start camera</button>
@@ -27,28 +27,31 @@
   <h3>Last scan</h3>
   <div id="last">—</div>
 
-  <h3>Saved scans (on this device)</h3>
-  <table id="tbl"><thead>
-    <tr><th>#</th><th>Payload</th><th>First seen</th><th>Last seen</th><th>Count</th></tr>
-  </thead><tbody></tbody></table>
+  <h3>Saved scans</h3>
+  <table id="tbl">
+    <thead>
+      <tr><th>#</th><th>Payload</th><th>First seen</th><th>Last seen</th><th>Count</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
   <div id="log"></div>
 
-  <!-- Proper minified build (HTTPS) -->
+  <!-- Load the QR library FIRST -->
   <script src="https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js"></script>
+
+  <!-- Your logic AFTER the library -->
   <script>
     const STORE_KEY = "qr_scans_v1";
 
-    // --- storage helpers ---
-    function loadStore(){
+    function loadStore() {
       try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); }
       catch { return {}; }
     }
-    function saveStore(obj){
+    function saveStore(obj) {
       localStorage.setItem(STORE_KEY, JSON.stringify(obj));
     }
 
-    // --- UI refs ---
     const startBtn = document.getElementById("start");
     const stopBtn  = document.getElementById("stop");
     const clearBtn = document.getElementById("clear");
@@ -56,10 +59,9 @@
     const logDiv   = document.getElementById("log");
     const tbody    = document.querySelector("#tbl tbody");
 
-    function log(t){ logDiv.textContent = t; }
+    function log(msg){ logDiv.textContent = msg; }
 
-    // --- table render ---
-    function render(){
+    function render() {
       const db = loadStore();
       const rows = Object.keys(db).sort();
       tbody.innerHTML = "";
@@ -76,23 +78,25 @@
     }
     render();
 
-    // --- scanner lifecycle ---
     let qr = null;
     let running = false;
     let debounceUntil = 0;
 
     startBtn.onclick = async () => {
-      try{
+      try {
         if (running) return;
-        qr = new Html5Qrcode("reader", { formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE] });
+        qr = new Html5Qrcode("reader");
         const cams = await Html5Qrcode.getCameras();
-        if (!cams.length) { log("No camera found"); return; }
+        if (!cams.length) { log("No camera found."); return; }
         const back = cams.find(c=>/back|rear|environment/i.test(c.label)) || cams[0];
         await qr.start(back.id, { fps:15, qrbox:320 }, onDecoded, _=>{});
         running = true;
-        startBtn.disabled = true; stopBtn.disabled = false;
+        startBtn.disabled = true;
+        stopBtn.disabled  = false;
         log("Camera started. Show a QR in the box.");
-      } catch(e){ log("Camera start error: " + e); }
+      } catch(e) {
+        log("Camera start error: " + e);
+      }
     };
 
     stopBtn.onclick = async () => {
@@ -100,14 +104,14 @@
       try { await qr.stop(); await qr.clear(); }
       catch(e){ /* ignore */ }
       running = false;
-      startBtn.disabled = false; stopBtn.disabled = true;
+      startBtn.disabled = false;
+      stopBtn.disabled  = true;
       log("Camera stopped.");
     };
 
-    // --- core behavior: save on first scan; on rescan, pop up stored info ---
-    function onDecoded(text){
+    function onDecoded(text) {
       const now = Date.now();
-      if (now < debounceUntil) return; // avoid rapid duplicates
+      if (now < debounceUntil) return;
       debounceUntil = now + 1200;
 
       const payload = text.trim();
@@ -121,33 +125,22 @@
         db[payload].count = (db[payload].count || 1) + 1;
         saveStore(db);
         render();
-
-        // Pop up the stored info
-        alert(
-          `Seen before\n\n` +
-          `Payload:\n${payload}\n\n` +
-          `First seen: ${db[payload].first_seen}\n` +
-          `Last seen:  ${db[payload].last_seen}\n` +
-          `Count:      ${db[payload].count}`
-        );
+        alert(`Seen before\n\n${payload}\nFirst: ${db[payload].first_seen}\nLast: ${db[payload].last_seen}\nCount: ${db[payload].count}`);
       } else {
         db[payload] = { first_seen: nowISO, last_seen: nowISO, count: 1 };
         saveStore(db);
         render();
         if (navigator.vibrate) navigator.vibrate(60);
-        log("Saved new QR payload on this device.");
+        log("Saved new QR payload.");
       }
     }
 
-    // --- clear storage ---
     clearBtn.onclick = () => {
       if (!confirm("Clear all saved scans on this device?")) return;
       localStorage.removeItem(STORE_KEY);
       render();
       log("All saved scans cleared.");
     };
-
-    // Info: must be served over HTTPS on phones for camera to work.
   </script>
 </body>
 </html>
