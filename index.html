@@ -1,282 +1,330 @@
 <!doctype html>
 <html>
 <head>
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>QR Scanner</title>
+  <title>Production QR Station</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin:16px; }
-    #reader { width:100%; max-width:520px; margin:12px auto; }
-    button { padding:8px 12px; margin:6px 4px; }
-    #log { white-space:pre-wrap; background:#f5f5f5; padding:8px; }
-    table { border-collapse:collapse; width:100%; margin-top:12px; }
-    th,td { border:1px solid #ddd; padding:6px; font-size:14px; }
-    th { background:#f6f6f6; }
-    /* Modal */
-    .modal-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-      display: none; align-items: center; justify-content: center; z-index: 9999;
+    :root {
+      font-family: system-ui, sans-serif;
+      color-scheme: light dark;
     }
-    .modal {
-      background: #fff; width: min(92vw, 420px); border-radius: 10px; padding: 16px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    body { margin:0; padding:0; background:#f4f6f8; }
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px;
     }
-    .modal h3 { margin: 0 0 10px 0; }
-    .modal label { display:block; margin:8px 0 4px; font-size: 14px; }
-    .modal input { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; }
-    .modal .row { display:flex; gap:8px; justify-content:flex-end; margin-top:12px; }
+    .top-bar {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:12px;
+    }
+    .pill {
+      padding:6px 10px;
+      border-radius:999px;
+      background:#e1e5ec;
+      font-size:13px;
+    }
+    .pill strong { font-weight:600; }
+    .controls-row {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin: 8px 0 12px;
+    }
+    button, select {
+      padding:8px 10px;
+      border-radius:6px;
+      border:1px solid #c0c6d0;
+      background:white;
+      font-size:14px;
+    }
+    button.primary {
+      background:#2257d8;
+      color:white;
+      border-color:#2257d8;
+    }
+    button.danger {
+      background:#d9223a;
+      color:white;
+      border-color:#d9223a;
+    }
+    button.small {
+      padding:4px 8px;
+      font-size:12px;
+    }
+    #reader {
+      width:100%;
+      max-width:520px;
+      margin: 0 auto 12px;
+      background:#000;
+    }
+    .panel {
+      background:white;
+      border-radius:10px;
+      padding:12px;
+      margin-bottom:12px;
+      box-shadow:0 2px 4px rgba(0,0,0,0.05);
+    }
+    .panel h3 {
+      margin:0 0 8px;
+      font-size:16px;
+    }
+    .field-row {
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      align-items:center;
+      margin-bottom:6px;
+      font-size:14px;
+    }
+    .field-row label {
+      font-size:13px;
+      color:#444;
+    }
+    .field-row select, .field-row input {
+      padding:6px 8px;
+      border-radius:6px;
+      border:1px solid #c0c6d0;
+      font-size:13px;
+    }
+    .tag {
+      display:inline-block;
+      padding:3px 7px;
+      border-radius:999px;
+      font-size:11px;
+      background:#eef1f7;
+      margin-right:6px;
+    }
+    .tag.dup { background:#ffe0e0; }
+    .tag.new { background:#e0ffe5; }
+    .log-area {
+      white-space:pre-wrap;
+      font-size:12px;
+      background:#f1f3f7;
+      padding:6px 8px;
+      border-radius:6px;
+      margin-top:4px;
+    }
+    table {
+      border-collapse:collapse;
+      width:100%;
+      font-size:12px;
+    }
+    th, td {
+      border:1px solid #d2d5dd;
+      padding:4px 6px;
+    }
+    th {
+      background:#eef1f7;
+      text-align:left;
+      font-weight:600;
+    }
+    .tabs {
+      display:flex;
+      gap:6px;
+      margin-bottom:6px;
+    }
+    .tabs button {
+      padding:4px 10px;
+      font-size:12px;
+    }
+    .tabs button.active {
+      background:#2257d8;
+      color:white;
+      border-color:#2257d8;
+    }
   </style>
 </head>
 <body>
-  <h2>Simple QR Scanner</h2>
+<div class="page">
 
-  <div>
-    <button id="start" disabled>Start camera</button>
-    <button id="stop" disabled>Stop camera</button>
-    <button id="clear">Clear saved scans</button>
-    <button id="changeIds">Change Scanner/Station</button>
-  </div>
-
-  <div id="reader"></div>
-
-  <h3>Last scan</h3>
-  <div id="last">—</div>
-
-  <h3>Saved scans</h3>
-  <table id="tbl">
-    <thead>
-      <tr><th>#</th><th>Payload</th><th>Scanner ID</th><th>Station ID</th><th>First seen</th><th>Last seen</th><th>Count</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
-  <div id="log">Loading QR library…</div>
-
-  <!-- One-time ID modal -->
-  <div id="idModalBackdrop" class="modal-backdrop">
-    <div class="modal">
-      <h3>Set device identity (one-time)</h3>
-      <label for="scannerIdInput">Scanner ID</label>
-      <input id="scannerIdInput" placeholder="e.g. PH-01" />
-      <label for="stationIdInput">Station ID</label>
-      <input id="stationIdInput" placeholder="e.g. ST-01" />
-      <div class="row">
-        <button id="cancelIds">Cancel</button>
-        <button id="saveIds">Save</button>
+  <!-- Top bar: device identity + role -->
+  <div class="top-bar">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+      <div class="pill">Scanner: <strong id="scannerDisplay">unset</strong></div>
+      <div class="pill">Station: <strong id="stationDisplay">unset</strong></div>
+      <div class="pill">Role: 
+        <strong id="roleDisplay">operator</strong>
       </div>
-      <div style="font-size:12px;color:#666;margin-top:6px;">
-        Saved to this device only. You can change it later via “Change Scanner/Station”.
-      </div>
+    </div>
+    <div class="controls-row" style="margin:0;">
+      <button id="btnChangeIds" class="small">Change IDs</button>
+      <button id="btnRoleOp"   class="small">Operator</button>
+      <button id="btnRoleMgr"  class="small">Manager</button>
+      <button id="btnRoleInst" class="small">Installer</button>
     </div>
   </div>
 
-  <script>
-    // Robust CDN loader
-    const CDN_SOURCES = [
-      "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
-      "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
-      "https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js",
-      "https://cdn.jsdelivr.net/npm/html5-qrcode/minified/html5-qrcode.min.js"
-    ];
+  <!-- Scanner controls + preview -->
+  <div class="panel">
+    <div class="controls-row">
+      <button id="btnStart" class="primary">Start camera</button>
+      <button id="btnStop" disabled>Stop camera</button>
+      <button id="btnClearScans">Clear local scans</button>
+      <button id="btnExportCsv">Export CSV</button>
+    </div>
+    <div id="reader"></div>
+    <div id="scanLog" class="log-area">Camera not started.</div>
+  </div>
 
-    const startBtn = document.getElementById("start");
-    const stopBtn  = document.getElementById("stop");
-    const clearBtn = document.getElementById("clear");
-    const changeIdsBtn = document.getElementById("changeIds");
-    const lastDiv  = document.getElementById("last");
-    const logDiv   = document.getElementById("log");
-    const tbody    = document.querySelector("#tbl tbody");
-    const idModalBackdrop = document.getElementById("idModalBackdrop");
-    const scannerIdInput = document.getElementById("scannerIdInput");
-    const stationIdInput = document.getElementById("stationIdInput");
-    const cancelIdsBtn = document.getElementById("cancelIds");
-    const saveIdsBtn = document.getElementById("saveIds");
+  <!-- Context: stage, entity, pallet, room -->
+  <div class="panel" id="contextPanel">
+    <h3>Context</h3>
+    <div class="field-row">
+      <label>Stage:</label>
+      <select id="stageSelect">
+        <option value="receiving">Receiving</option>
+        <option value="cutting">Cutting</option>
+        <option value="edging">Edging</option>
+        <option value="packing">Packing</option>
+        <option value="shipment">Shipment</option>
+        <option value="install">Install</option>
+      </select>
 
-    function log(t){ logDiv.textContent = t; }
+      <label>Entity:</label>
+      <select id="entitySelect">
+        <option value="cabinet">Cabinet</option>
+        <option value="pallet">Pallet</option>
+        <option value="room">Room</option>
+        <option value="accessory">Accessory</option>
+      </select>
+    </div>
 
-    function loadScript(src){
-      return new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = src; s.async = true;
-        s.onload = () => resolve(src);
-        s.onerror = () => reject(new Error("failed: " + src));
-        document.head.appendChild(s);
-      });
-    }
+    <div class="field-row">
+      <label>Current pallet ID:</label>
+      <input id="palletInput" placeholder="scan / type pallet UID" />
+      <button id="btnSetPallet" class="small">Set pallet</button>
+      <span class="tag" id="palletStatus">none</span>
+    </div>
 
-    (async function ensureLib(){
-      for (const src of CDN_SOURCES) {
-        try {
-          await loadScript(src);
-          if (window.Html5Qrcode) {
-            log("QR library loaded from: " + src);
-            startBtn.disabled = false;
-            return;
-          }
-        } catch {}
-      }
-      log("Failed to load QR library from all CDNs. Try incognito without extensions.");
-    })();
-  </script>
+    <div class="field-row">
+      <label>Current room ID:</label>
+      <input id="roomInput" placeholder="scan / type room UID" />
+      <button id="btnSetRoom" class="small">Set room</button>
+      <span class="tag" id="roomStatus">none</span>
+    </div>
+  </div>
 
-  <script>
-    // Storage keys
-    const STORE_KEY = "qr_scans_v2";            // includes ids per row
-    const IDS_KEY   = "device_ids_v1";          // {scanner_id, station_id}
+  <!-- Last scan card -->
+  <div class="panel" id="lastScanPanel">
+    <h3>Last scan</h3>
+    <div id="lastScanContent">
+      <div>No scan yet.</div>
+    </div>
+    <div class="controls-row">
+      <button id="btnAssignToPallet" class="small">Assign to pallet</button>
+      <button id="btnAssignToRoom"   class="small">Assign to room</button>
+      <button id="btnRebind"         class="small">Rebind UID</button>
+    </div>
+  </div>
 
-    // Load/Save helpers
-    function loadStore(){ try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}"); } catch { return {}; } }
-    function saveStore(obj){ localStorage.setItem(STORE_KEY, JSON.stringify(obj)); }
-    function loadIds(){ try { return JSON.parse(localStorage.getItem(IDS_KEY) || "{}"); } catch { return {}; } }
-    function saveIds(ids){ localStorage.setItem(IDS_KEY, JSON.stringify(ids)); }
+  <!-- History + filters -->
+  <div class="panel">
+    <h3>History</h3>
 
-    // Pre-fill IDs from URL once if present
-    (function bootstrapFromUrl(){
-      const u = new URL(location.href);
-      const sc = u.searchParams.get("scanner");
-      const st = u.searchParams.get("station");
-      const cur = loadIds();
-      const next = { scanner_id: sc || cur.scanner_id || "", station_id: st || cur.station_id || "" };
-      saveIds(next);
-    })();
+    <div class="tabs">
+      <button id="tabAll"      class="active small">All</button>
+      <button id="tabPallet"   class="small">By pallet</button>
+      <button id="tabRoom"     class="small">By room</button>
+      <button id="tabDuplicates" class="small">Duplicates</button>
+    </div>
 
-    // Table render
-    function render(){
-      const db = loadStore();
-      const rows = Object.keys(db).sort();
-      tbody.innerHTML = "";
-      rows.forEach((payload,i)=>{
-        const r = db[payload];
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${i+1}</td>
-          <td style="word-break:break-all">${payload}</td>
-          <td>${r.scanner_id || ""}</td>
-          <td>${r.station_id || ""}</td>
-          <td>${r.first_seen}</td>
-          <td>${r.last_seen}</td>
-          <td>${r.count}</td>`;
-        tbody.appendChild(tr);
-      });
-    }
-    render();
+    <div class="field-row">
+      <label>Filter by stage:</label>
+      <select id="filterStage">
+        <option value="">Any</option>
+        <option value="receiving">Receiving</option>
+        <option value="cutting">Cutting</option>
+        <option value="edging">Edging</option>
+        <option value="packing">Packing</option>
+        <option value="shipment">Shipment</option>
+        <option value="install">Install</option>
+      </select>
 
-    // Modal helpers
-    function showIdModal(prefill={}) {
-      scannerIdInput.value = prefill.scanner_id || "";
-      stationIdInput.value = prefill.station_id || "";
-      idModalBackdrop.style.display = "flex";
-    }
-    function hideIdModal(){ idModalBackdrop.style.display = "none"; }
+      <label>Filter by entity:</label>
+      <select id="filterEntity">
+        <option value="">Any</option>
+        <option value="cabinet">Cabinet</option>
+        <option value="pallet">Pallet</option>
+        <option value="room">Room</option>
+        <option value="accessory">Accessory</option>
+      </select>
+    </div>
 
-    changeIdsBtn.onclick = () => {
-      showIdModal(loadIds());
-    };
-    cancelIdsBtn.onclick = hideIdModal;
-    saveIdsBtn.onclick = () => {
-      const scanner_id = scannerIdInput.value.trim();
-      const station_id = stationIdInput.value.trim();
-      if (!scanner_id || !station_id) { alert("Both IDs required."); return; }
-      saveIds({ scanner_id, station_id });
-      hideIdModal();
-      log(`Saved device identity → Scanner: ${scanner_id}, Station: ${station_id}`);
-      // If a scan was pending while we asked for IDs, process it now
-      if (pendingPayload) { processScan(pendingPayload); pendingPayload = null; }
-    };
+    <table id="historyTable">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>UID</th>
+          <th>Stage</th>
+          <th>Entity</th>
+          <th>Pallet</th>
+          <th>Room</th>
+          <th>Scanner</th>
+          <th>Station</th>
+          <th>First seen</th>
+          <th>Last seen</th>
+          <th>Count</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+  </div>
 
-    // Scanner lifecycle
-    let qr = null;
-    let running = false;
-    let debounceUntil = 0;
-    let pendingPayload = null; // holds first scan if IDs missing
+</div>
 
-    startBtn.onclick = async () => {
-      try {
-        if (!window.Html5Qrcode) { log("Library not available."); return; }
-        if (running) return;
-        qr = new Html5Qrcode("reader");
-        const cams = await Html5Qrcode.getCameras();
-        if (!cams.length) { log("No camera found."); return; }
-        const back = cams.find(c=>/back|rear|environment/i.test(c.label)) || cams[0];
-        await qr.start(back.id, { fps:15, qrbox:320 }, onDecoded, _=>{});
-        running = true;
-        startBtn.disabled = true;
-        stopBtn.disabled  = false;
-        log("Camera started. Show a QR in the box.");
-      } catch(e) {
-        log("Camera start error: " + e);
-      }
-    };
+<!-- Device ID modal structure (reuse your existing logic, just structure here) -->
+<div id="deviceModalBackdrop" style="
+  position:fixed;inset:0;background:rgba(0,0,0,0.5);
+  display:none;align-items:center;justify-content:center;z-index:9999;">
+  <div style="background:#fff;width:min(92vw,420px);border-radius:10px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,0.25);">
+    <h3 style="margin-top:0;">Set device identity</h3>
+    <div style="margin-bottom:8px;font-size:13px;">Saved once per device. Used for every scan.</div>
+    <div style="margin-bottom:8px;">
+      <label style="font-size:13px;">Scanner ID</label>
+      <input id="deviceScannerInput" style="width:100%;padding:8px;border-radius:6px;border:1px solid #c0c6d0;" placeholder="e.g. PH-01" />
+    </div>
+    <div style="margin-bottom:8px;">
+      <label style="font-size:13px;">Station ID</label>
+      <input id="deviceStationInput" style="width:100%;padding:8px;border-radius:6px;border:1px solid #c0c6d0;" placeholder="e.g. ST-01" />
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+      <button id="deviceModalCancel" class="small">Cancel</button>
+      <button id="deviceModalSave" class="small primary">Save</button>
+    </div>
+  </div>
+</div>
 
-    stopBtn.onclick = async () => {
-      if (!running) return;
-      try { await qr.stop(); await qr.clear(); } catch(e){}
-      running = false;
-      startBtn.disabled = false;
-      stopBtn.disabled  = true;
-      log("Camera stopped.");
-    };
+<!-- Scripts go here: first load html5-qrcode, then your logic -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js"></script>
+<script>
+  // Here you plug in the logic you already built:
+  // - load/save device IDs (scanner/station) to localStorage
+  // - start/stop camera using Html5Qrcode on btnStart/btnStop
+  // - on every decode:
+  //    * read current stage/entity
+  //    * attach pallet/room ids
+  //    * write records into a local "DB" and repaint history table
+  //    * update lastScanPanel: UID + tags (new/duplicate, stage, entity)
+  //    * for duplicates, highlight with .tag.dup
+  // - wire Export CSV and Clear to your existing functions
 
-    function onDecoded(text){
-      const now = Date.now();
-      if (now < debounceUntil) return;
-      debounceUntil = now + 1200;
-
-      const payload = text.trim();
-      const ids = loadIds();
-      if (!ids.scanner_id || !ids.station_id) {
-        // First time: prompt once, then process this same payload after save
-        pendingPayload = payload;
-        showIdModal();
-        return;
-      }
-      processScan(payload);
-    }
-
-    function processScan(payload){
-      lastDiv.textContent = payload;
-
-      const ids = loadIds();
-      const db = loadStore();
-      const nowISO = new Date().toISOString();
-
-      if (db[payload]) {
-        db[payload].last_seen = nowISO;
-        db[payload].count = (db[payload].count || 1) + 1;
-      } else {
-        db[payload] = {
-          scanner_id: ids.scanner_id,
-          station_id: ids.station_id,
-          first_seen: nowISO,
-          last_seen: nowISO,
-          count: 1
-        };
-      }
-      saveStore(db);
-      render();
-
-      // Notify on repeat
-      if (db[payload].count > 1) {
-        alert(
-          `Seen before\n\n` +
-          `Payload: ${payload}\n` +
-          `Scanner: ${db[payload].scanner_id}\n` +
-          `Station: ${db[payload].station_id}\n` +
-          `First:   ${db[payload].first_seen}\n` +
-          `Last:    ${db[payload].last_seen}\n` +
-          `Count:   ${db[payload].count}`
-        );
-      } else {
-        if (navigator.vibrate) navigator.vibrate(60);
-        log(`Saved new QR with device identity → Scanner: ${ids.scanner_id}, Station: ${ids.station_id}`);
-      }
-    }
-
-    clearBtn.onclick = () => {
-      if (!confirm("Clear all saved scans on this device?")) return;
-      localStorage.removeItem(STORE_KEY);
-      render();
-      log("All saved scans cleared.");
-    };
-  </script>
+  // Minimal placeholders so page doesn’t error:
+  document.getElementById("btnChangeIds").onclick = () => {
+    document.getElementById("deviceModalBackdrop").style.display = "flex";
+  };
+  document.getElementById("deviceModalCancel").onclick = () => {
+    document.getElementById("deviceModalBackdrop").style.display = "none";
+  };
+  document.getElementById("deviceModalSave").onclick = () => {
+    // Save scanner/station here and update #scannerDisplay / #stationDisplay
+    document.getElementById("deviceModalBackdrop").style.display = "none";
+  };
+</script>
 </body>
 </html>
