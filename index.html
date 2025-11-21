@@ -184,22 +184,33 @@ function loadScript(src){
   });
 }
 
-(async()=> {
+// Wait for DOM and library to be ready
+async function initLibrary() {
   for(const src of CDN_SOURCES){
     try{
       await loadScript(src);
       if(window.Html5Qrcode){
         document.getElementById("scanLog").textContent = "QR library loaded.";
         document.getElementById("btnStart").disabled = false;
+        initializeApp();
         return;
       }
-    }catch(e){}
+    }catch(e){
+      console.error("Failed to load from", src, e);
+    }
   }
   document.getElementById("scanLog").textContent="Failed to load QR library.";
-})();
-</script>
+}
 
-<script>
+// Check if DOM is already loaded
+if(document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initLibrary);
+} else {
+  // DOM already loaded, run immediately
+  initLibrary();
+}
+
+function initializeApp() {
 /* ===========
    STORAGE HELPERS
    =========== */
@@ -221,6 +232,13 @@ const btnClear    = document.getElementById("btnClearScans");
 const btnExport   = document.getElementById("btnExportCsv");
 const btnChangeIds= document.getElementById("btnChangeIds");
 const scanLog     = document.getElementById("scanLog");
+
+// Verify elements exist
+if(!btnStart || !btnStop || !scanLog){
+  console.error("Required elements not found!", {btnStart, btnStop, scanLog});
+  if(scanLog) scanLog.textContent = "Error: Page elements missing.";
+  return;
+}
 
 const stageSelect = document.getElementById("stageSelect");
 const entitySelect= document.getElementById("entitySelect");
@@ -273,6 +291,12 @@ mSave.onclick = () => {
   saveIds({scanner_id, station_id});
   updateIdDisplay();
   closeModal();
+  
+  // Process pending scan if any
+  if(pendingPayload){
+    processScan(pendingPayload);
+    pendingPayload = null;
+  }
 };
 
 /* ===========
@@ -309,59 +333,89 @@ let debounceUntil = 0;
 let pendingPayload = null;
 
 btnStart.onclick = async () => {
+  console.log("Start button clicked!");
   try{
-    if(!window.Html5Qrcode){ scanLog.textContent="Library missing."; return; }
-    if(running) return;
+    scanLog.textContent="Checking library...";
+    if(!window.Html5Qrcode){ 
+      scanLog.textContent="Library missing. Please refresh the page.";
+      console.error("Html5Qrcode not found");
+      return; 
+    }
+    if(running) {
+      scanLog.textContent="Camera already running.";
+      return;
+    }
 
-    scanLog.textContent="Requesting camera permission...";
+    scanLog.textContent="Requesting camera access...";
     qr = new Html5Qrcode("reader");
+    console.log("Html5Qrcode instance created");
     
-    // Request camera permission first by trying to get cameras
+    // Request camera permission first
     let cams = [];
     try {
       cams = await Html5Qrcode.getCameras();
     } catch(e) {
+      console.log("getCameras failed, requesting permission directly:", e);
       // If getCameras fails, try requesting permission directly
       try {
+        if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+          scanLog.textContent="Camera API not available. Use HTTPS or localhost.";
+          return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         stream.getTracks().forEach(track => track.stop());
         cams = await Html5Qrcode.getCameras();
       } catch(permError) {
-        scanLog.textContent="Camera permission denied. Please allow camera access.";
+        console.error("Permission error:", permError);
+        scanLog.textContent="Camera permission denied. Please allow camera access and try again.";
         return;
       }
     }
     
-    if(!cams.length){ scanLog.textContent="No camera found."; return; }
+    if(!cams || !cams.length){
+      scanLog.textContent="No camera found. Please connect a camera.";
+      return;
+    }
 
     const cam = cams.find(c=>/back|rear/i.test(c.label)) || cams[0];
-    scanLog.textContent="Starting camera...";
+    scanLog.textContent=`Starting camera: ${cam.label || cam.id}...`;
 
+    // Simplified config - qrbox can be a number (width) or object
     await qr.start(
       cam.id, 
       {
-        fps: 15, 
-        qrbox: {width: 320, height: 320},
-        videoConstraints: {
-          facingMode: cam.label.match(/back|rear/i) ? "environment" : "user"
-        }
+        fps: 10,
+        qrbox: 320
       }, 
       onDecoded,
-      () => {} // verbose callback (optional)
+      undefined
     );
+    
     running = true;
     btnStart.disabled=true;
     btnStop.disabled=false;
-    scanLog.textContent="Camera started.";
+    scanLog.textContent="Camera started. Point at QR code.";
   }catch(e){
-    scanLog.textContent="Camera error: " + (e.message || e);
     console.error("Camera error:", e);
+    scanLog.textContent="Error: " + (e.message || String(e));
+    running = false;
+    btnStart.disabled=false;
+    btnStop.disabled=true;
+    if(qr){
+      try{ await qr.stop(); }catch(ex){}
+      try{ await qr.clear(); }catch(ex){}
+    }
   }
 };
 
 btnStop.onclick = async () => {
-  if(!running) return;
-  try{ await qr.stop(); await qr.clear(); }catch(e){}
+  if(!running || !qr) return;
+  try{ 
+    await qr.stop(); 
+    await qr.clear();
+  }catch(e){
+    console.error("Stop error:", e);
+  }
   running=false;
   btnStart.disabled=false;
   btnStop.disabled=true;
@@ -379,6 +433,7 @@ function onDecoded(text){
   if(!ids.scanner_id || !ids.station_id){
     pendingPayload = payload;
     openModal();
+    scanLog.textContent="Please set Scanner ID and Station ID first.";
     return;
   }
 
@@ -462,6 +517,15 @@ btnExport.onclick = ()=>{
   a.download="qr_scans.csv";
   a.click();
 };
+
+// Verify button handlers are attached
+console.log("App initialized. Button handlers attached:", {
+  btnStart: !!btnStart.onclick,
+  btnStop: !!btnStop.onclick,
+  library: !!window.Html5Qrcode
+});
+
+} // end initializeApp
 </script>
 
 </body>
