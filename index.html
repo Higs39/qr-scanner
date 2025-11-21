@@ -313,19 +313,49 @@ btnStart.onclick = async () => {
     if(!window.Html5Qrcode){ scanLog.textContent="Library missing."; return; }
     if(running) return;
 
+    scanLog.textContent="Requesting camera permission...";
     qr = new Html5Qrcode("reader");
-    const cams = await Html5Qrcode.getCameras();
-    if(!cams.length){ scanLog.textContent="No camera."; return; }
+    
+    // Request camera permission first by trying to get cameras
+    let cams = [];
+    try {
+      cams = await Html5Qrcode.getCameras();
+    } catch(e) {
+      // If getCameras fails, try requesting permission directly
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+        cams = await Html5Qrcode.getCameras();
+      } catch(permError) {
+        scanLog.textContent="Camera permission denied. Please allow camera access.";
+        return;
+      }
+    }
+    
+    if(!cams.length){ scanLog.textContent="No camera found."; return; }
 
     const cam = cams.find(c=>/back|rear/i.test(c.label)) || cams[0];
+    scanLog.textContent="Starting camera...";
 
-    await qr.start(cam.id, {fps:15, qrbox:320}, onDecoded);
+    await qr.start(
+      cam.id, 
+      {
+        fps: 15, 
+        qrbox: {width: 320, height: 320},
+        videoConstraints: {
+          facingMode: cam.label.match(/back|rear/i) ? "environment" : "user"
+        }
+      }, 
+      onDecoded,
+      () => {} // verbose callback (optional)
+    );
     running = true;
     btnStart.disabled=true;
     btnStop.disabled=false;
     scanLog.textContent="Camera started.";
   }catch(e){
-    scanLog.textContent="Camera error: "+e;
+    scanLog.textContent="Camera error: " + (e.message || e);
+    console.error("Camera error:", e);
   }
 };
 
