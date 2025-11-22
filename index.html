@@ -672,11 +672,18 @@ function processScan(parsed){
   const uid = parsed.uid;
   const product_id = parsed.product_id || uid;
 
-  let status = "update";
+  // Check for duplicate FIRST - if duplicate, show warning and exit without saving
   const isDuplicate = !!db[uid];
-  if(!isDuplicate){
-    status = "new";
+  if(isDuplicate){
+    showDuplicateWarning();
+    if(navigator.vibrate) navigator.vibrate([100, 50, 100]); // Double vibration for duplicate
+    scanLog.textContent = "⚠ DUPLICATE SCAN - This QR code was already scanned. No changes made.";
+    // Don't save anything, don't update Last scan panel, don't modify database
+    return;
   }
+
+  // Not a duplicate - proceed with saving new scan
+  const status = "new";
 
   // Store record with product metadata
   db[uid] = {
@@ -729,15 +736,7 @@ function processScan(parsed){
   lastScanContent.innerHTML = html;
 
   if(status==="new" && navigator.vibrate) navigator.vibrate(60);
-  
-  // Show red warning for duplicate scans
-  if(isDuplicate){
-    showDuplicateWarning();
-    if(navigator.vibrate) navigator.vibrate([100, 50, 100]); // Double vibration for duplicate
-    scanLog.textContent = "⚠ DUPLICATE SCAN - Updated existing record.";
-  } else {
-    scanLog.textContent = "✓ Saved new scan.";
-  }
+  scanLog.textContent = "✓ Saved new scan.";
 }
 
 /* ===========
