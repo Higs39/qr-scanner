@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Production QR Station</title>
+  <!-- Try to load QR library directly first -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" 
+          crossorigin="anonymous"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin:0; background:#f4f6f8; }
     .page { max-width: 1100px; margin: 0 auto; padding: 16px; }
@@ -25,7 +28,35 @@
     }
     button.primary { background:#2257d8; color:white; border-color:#2257d8; }
     button.small { padding:4px 8px; font-size:12px; }
-    #reader { width:100%; max-width:520px; margin: 0 auto 12px; background:#000; }
+    #reader { width:100%; max-width:520px; margin: 0 auto 12px; background:#000; position:relative; border-radius:8px; overflow:hidden; }
+    #reader.duplicate-warning {
+      box-shadow: 0 0 0 4px #ff4444, 0 0 20px rgba(255,68,68,0.6);
+      animation: pulse-red 0.5s ease-in-out;
+    }
+    @keyframes pulse-red {
+      0%, 100% { box-shadow: 0 0 0 4px #ff4444, 0 0 20px rgba(255,68,68,0.6); }
+      50% { box-shadow: 0 0 0 8px #ff4444, 0 0 40px rgba(255,68,68,0.8); }
+    }
+    .duplicate-overlay {
+      position:absolute; top:0; left:0; right:0; bottom:0;
+      background:rgba(255,68,68,0.3); z-index:10;
+      display:none; align-items:center; justify-content:center;
+      pointer-events:none;
+    }
+    .duplicate-overlay.show {
+      display:flex; animation: flash-red 1s ease-out;
+    }
+    @keyframes flash-red {
+      0% { background:rgba(255,68,68,0.1); }
+      50% { background:rgba(255,68,68,0.5); }
+      100% { background:rgba(255,68,68,0.3); }
+    }
+    .duplicate-text {
+      background:rgba(255,68,68,0.95); color:white;
+      padding:12px 20px; border-radius:8px;
+      font-weight:600; font-size:16px;
+      box-shadow:0 4px 12px rgba(0,0,0,0.3);
+    }
     .panel {
       background:white; border-radius:10px; padding:12px;
       margin-bottom:12px; box-shadow:0 2px 4px rgba(0,0,0,0.05);
@@ -91,7 +122,11 @@
       <button id="btnStart" class="primary" disabled>Start camera</button>
       <button id="btnStop" disabled>Stop camera</button>
     </div>
-    <div id="reader"></div>
+    <div id="reader">
+      <div class="duplicate-overlay" id="duplicateOverlay">
+        <div class="duplicate-text">⚠ DUPLICATE SCAN ⚠</div>
+      </div>
+    </div>
     <div id="scanLog" class="log-area">Loading QR library…</div>
   </div>
 
@@ -115,6 +150,7 @@
         <option value="pallet">Pallet</option>
         <option value="room">Room</option>
         <option value="accessory">Accessory</option>
+        <option value="trolley">Trolley</option>
       </select>
     </div>
   </div>
@@ -170,36 +206,127 @@
    LOAD QR LIB
    =========== */
 const CDN_SOURCES = [
+  "https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js",
   "https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
-  "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js"
+  "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/minified/html5-qrcode.min.js",
+  "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"
 ];
 
 function loadScript(src){
   return new Promise((resolve,reject)=>{
+    console.log("Attempting to load from:", src);
+    
+    // Use simple script tag method which is more reliable
     const s=document.createElement("script");
-    s.src=src; s.async=true;
-    s.onload=()=>resolve(src);
-    s.onerror=()=>reject();
+    s.src=src;
+    s.type="text/javascript";
+    s.async=false; // Load synchronously to avoid race conditions
+    s.crossOrigin="anonymous";
+    
+    let resolved = false;
+    
+    s.onload=()=>{
+      if(resolved) return;
+      // Give the library a moment to initialize
+      let attempts = 0;
+      const checkLib = setInterval(() => {
+        if(window.Html5Qrcode) {
+          resolved = true;
+          clearInterval(checkLib);
+          console.log("✓ Library loaded successfully from", src);
+          resolve(src);
+        } else if(attempts++ > 200) {
+          clearInterval(checkLib);
+          if(!resolved) {
+            resolved = true;
+            reject(new Error("Library not available after load"));
+          }
+        }
+      }, 50);
+    };
+    
+    s.onerror=(e)=>{
+      if(resolved) return;
+      resolved = true;
+      console.error("✗ Failed to load script from", src);
+      reject(new Error("Script load failed"));
+    };
+    
+    // Set timeout as fallback
+    setTimeout(() => {
+      if(!resolved && window.Html5Qrcode) {
+        resolved = true;
+        console.log("✓ Library available after timeout from", src);
+        resolve(src);
+      } else if(!resolved) {
+        resolved = true;
+        reject(new Error("Timeout waiting for library"));
+      }
+    }, 15000);
+    
     document.head.appendChild(s);
   });
 }
 
 // Wait for DOM and library to be ready
 async function initLibrary() {
-  for(const src of CDN_SOURCES){
-    try{
-      await loadScript(src);
-      if(window.Html5Qrcode){
-        document.getElementById("scanLog").textContent = "QR library loaded.";
-        document.getElementById("btnStart").disabled = false;
-        initializeApp();
-        return;
-      }
-    }catch(e){
-      console.error("Failed to load from", src, e);
-    }
+  const scanLogEl = document.getElementById("scanLog");
+  if(!scanLogEl) {
+    console.error("scanLog element not found");
+    return;
   }
-  document.getElementById("scanLog").textContent="Failed to load QR library.";
+  
+  // First check if library is already loaded from the direct script tag
+  let attempts = 0;
+  const checkDirectLoad = setInterval(() => {
+    if(window.Html5Qrcode){
+      clearInterval(checkDirectLoad);
+      scanLogEl.textContent = "✓ QR library loaded successfully.";
+      const btnStart = document.getElementById("btnStart");
+      if(btnStart) btnStart.disabled = false;
+      initializeApp();
+      return;
+    }
+    attempts++;
+    if(attempts > 30) { // Wait up to 3 seconds for direct load
+      clearInterval(checkDirectLoad);
+      // If not loaded yet, try dynamic loading
+      loadLibraryDynamically();
+    }
+  }, 100);
+  
+  // Also try dynamic loading if direct load doesn't work
+  async function loadLibraryDynamically(){
+    scanLogEl.textContent = "Loading QR library...";
+    
+    for(let i = 0; i < CDN_SOURCES.length; i++){
+      const src = CDN_SOURCES[i];
+      try{
+        console.log(`[${i+1}/${CDN_SOURCES.length}] Trying to load from:`, src);
+        scanLogEl.textContent = `Loading QR library (${i+1}/${CDN_SOURCES.length})...`;
+        
+        await loadScript(src);
+        
+        // Double check library is available
+        if(window.Html5Qrcode){
+          scanLogEl.textContent = "✓ QR library loaded successfully.";
+          const btnStart = document.getElementById("btnStart");
+          if(btnStart) btnStart.disabled = false;
+          initializeApp();
+          return;
+        } else {
+          console.warn("Script loaded but Html5Qrcode not found");
+        }
+      }catch(e){
+        console.error(`[${i+1}/${CDN_SOURCES.length}] Failed to load from`, src, e);
+        // Continue to next source
+      }
+    }
+    
+    // All sources failed - show helpful error
+    scanLogEl.textContent = "✗ Failed to load QR library. Please check:\n1. Internet connection\n2. Browser console for details\n3. Try refreshing the page";
+    console.error("All CDN sources failed. Current sources tried:", CDN_SOURCES);
+  }
 }
 
 // Check if DOM is already loaded
@@ -232,22 +359,24 @@ const btnClear    = document.getElementById("btnClearScans");
 const btnExport   = document.getElementById("btnExportCsv");
 const btnChangeIds= document.getElementById("btnChangeIds");
 const scanLog     = document.getElementById("scanLog");
-
-// Verify elements exist
-if(!btnStart || !btnStop || !scanLog){
-  console.error("Required elements not found!", {btnStart, btnStop, scanLog});
-  if(scanLog) scanLog.textContent = "Error: Page elements missing.";
-  return;
-}
+const readerDiv = document.getElementById("reader");
+const duplicateOverlay = document.getElementById("duplicateOverlay");
 
 const stageSelect = document.getElementById("stageSelect");
-const entitySelect= document.getElementById("entitySelect");
+const entitySelect = document.getElementById("entitySelect");
 
 const lastScanContent = document.getElementById("lastScanContent");
 const historyBody = document.getElementById("historyBody");
 
 const scannerDisplay = document.getElementById("scannerDisplay");
 const stationDisplay = document.getElementById("stationDisplay");
+
+// Verify essential elements exist
+if(!btnStart || !btnStop || !scanLog || !readerDiv){
+  console.error("Required elements not found!", {btnStart, btnStop, scanLog, readerDiv});
+  if(scanLog) scanLog.textContent = "Error: Page elements missing.";
+  return;
+}
 
 const modal = document.getElementById("deviceModalBackdrop");
 const mScanner = document.getElementById("deviceScannerInput");
@@ -293,8 +422,29 @@ mSave.onclick = () => {
   closeModal();
   
   // Process pending scan if any
-  if(pendingPayload){
-    processScan(pendingPayload);
+  if(pendingParsed){
+    // Auto-set entity from parsed data if available
+    if(pendingParsed.entityFromQR && entitySelect){
+      const options = Array.from(entitySelect.options);
+      const matchingOption = options.find(opt => opt.value === pendingParsed.entityFromQR);
+      if(matchingOption){
+        entitySelect.value = pendingParsed.entityFromQR;
+      }
+    }
+    processScan(pendingParsed);
+    pendingPayload = null;
+    pendingParsed = null;
+  } else if(pendingPayload){
+    // Fallback: if we only have raw payload, parse it now
+    const parsed = parseQrPayload(pendingPayload);
+    if(parsed.entityFromQR && entitySelect){
+      const options = Array.from(entitySelect.options);
+      const matchingOption = options.find(opt => opt.value === parsed.entityFromQR);
+      if(matchingOption){
+        entitySelect.value = parsed.entityFromQR;
+      }
+    }
+    processScan(parsed);
     pendingPayload = null;
   }
 };
@@ -313,16 +463,52 @@ function renderHistory(){
     tr.innerHTML = `
       <td>${i+1}</td>
       <td>${uid}</td>
-      <td>${r.stage}</td>
-      <td>${r.entity}</td>
-      <td>${r.scanner_id}</td>
-      <td>${r.station_id}</td>
-      <td>${r.timestamp}</td>
+      <td>${r.stage || ""}</td>
+      <td>${r.entity || ""}</td>
+      <td>${r.scanner_id || ""}</td>
+      <td>${r.station_id || ""}</td>
+      <td>${r.timestamp || ""}</td>
     `;
     historyBody.appendChild(tr);
   });
 }
 renderHistory();
+
+/* ===========
+   QR PAYLOAD PARSER
+   =========== */
+function parseQrPayload(rawText){
+  const trimmed = rawText.trim();
+  
+  // Try to parse as JSON
+  try {
+    const parsed = JSON.parse(trimmed);
+    if(parsed && typeof parsed === 'object'){
+      // Extract fields from JSON
+      const uid = parsed.product_id || trimmed;
+      return {
+        uid,
+        product_id: parsed.product_id || uid,
+        product_type: parsed.product_type,
+        variant_info: parsed.variant_info,
+        entityFromQR: parsed.entity,
+        order_id: parsed.order_id
+      };
+    }
+  } catch(e) {
+    // Not valid JSON, treat as plain text
+  }
+  
+  // Plain text fallback
+  return {
+    uid: trimmed,
+    product_id: trimmed,
+    product_type: undefined,
+    variant_info: undefined,
+    entityFromQR: undefined,
+    order_id: undefined
+  };
+}
 
 /* ===========
    QR SCANNER
@@ -331,6 +517,7 @@ let qr = null;
 let running = false;
 let debounceUntil = 0;
 let pendingPayload = null;
+let pendingParsed = null;
 
 btnStart.onclick = async () => {
   console.log("Start button clicked!");
@@ -420,6 +607,10 @@ btnStop.onclick = async () => {
   btnStart.disabled=false;
   btnStop.disabled=true;
   scanLog.textContent="Camera stopped.";
+  
+  // Clear any duplicate warning
+  if(readerDiv) readerDiv.classList.remove("duplicate-warning");
+  if(duplicateOverlay) duplicateOverlay.classList.remove("show");
 };
 
 function onDecoded(text){
@@ -427,59 +618,126 @@ function onDecoded(text){
   if(now<debounceUntil) return;
   debounceUntil = now + 1200;
 
-  const payload = text.trim();
+  // Parse QR payload
+  const parsed = parseQrPayload(text);
   const ids = loadIds();
 
+  // Auto-set entity dropdown if entityFromQR matches an option
+  if(parsed.entityFromQR && entitySelect){
+    const options = Array.from(entitySelect.options);
+    const matchingOption = options.find(opt => opt.value === parsed.entityFromQR);
+    if(matchingOption){
+      entitySelect.value = parsed.entityFromQR;
+    }
+  }
+
   if(!ids.scanner_id || !ids.station_id){
-    pendingPayload = payload;
+    pendingPayload = text.trim();
+    pendingParsed = parsed;
     openModal();
     scanLog.textContent="Please set Scanner ID and Station ID first.";
     return;
   }
 
-  processScan(payload);
+  processScan(parsed);
 }
 
-function processScan(payload){
+function showDuplicateWarning(){
+  if(!readerDiv) return;
+  
+  // Add red border class
+  readerDiv.classList.add("duplicate-warning");
+  
+  // Show overlay if it exists
+  if(duplicateOverlay){
+    duplicateOverlay.classList.add("show");
+  }
+  
+  // Clear after 2 seconds
+  setTimeout(() => {
+    readerDiv.classList.remove("duplicate-warning");
+    if(duplicateOverlay){
+      duplicateOverlay.classList.remove("show");
+    }
+  }, 2000);
+}
+
+function processScan(parsed){
   const ids = loadIds();
   const db = loadStore();
 
   const timestamp = new Date().toISOString();
   const stage = stageSelect.value;
-  const entity= entitySelect.value;
+  const entity = entitySelect ? entitySelect.value : undefined;
+  const uid = parsed.uid;
+  const product_id = parsed.product_id || uid;
 
   let status = "update";
-  if(!db[payload]){
+  const isDuplicate = !!db[uid];
+  if(!isDuplicate){
     status = "new";
   }
 
-  db[payload] = {
+  // Store record with product metadata
+  db[uid] = {
     scanner_id: ids.scanner_id,
     station_id: ids.station_id,
     stage,
     entity,
-    timestamp
+    timestamp,
+    product_id: product_id,
+    product_type: parsed.product_type,
+    variant_info: parsed.variant_info,
+    order_id: parsed.order_id
   };
 
   saveStore(db);
   renderHistory();
 
-  lastScanContent.innerHTML = `
-    <div><strong>UID:</strong> ${payload}</div>
-    <div>
-      <span class="tag ${status}">${status.toUpperCase()}</span>
-      <span class="tag">Stage: ${stage}</span>
-      <span class="tag">Entity: ${entity}</span>
-    </div>
-    <div style="margin-top:4px;font-size:12px;">
-      Scanner: ${ids.scanner_id}, Station: ${ids.station_id}<br/>
-      Timestamp: ${timestamp}
-    </div>
-  `;
+  // Build Last Scan panel HTML
+  let html = `<div><strong>UID:</strong> ${uid}</div>`;
+  
+  // Show product_id if different from UID
+  if(product_id && product_id !== uid){
+    html += `<div><strong>Product ID:</strong> ${product_id}</div>`;
+  }
+  
+  // Build tags row
+  html += `<div>`;
+  html += `<span class="tag ${status}">${status.toUpperCase()}</span>`;
+  html += `<span class="tag">Stage: ${stage}</span>`;
+  if(entity){
+    html += `<span class="tag">Entity: ${entity}</span>`;
+  }
+  if(parsed.product_type){
+    html += `<span class="tag">${parsed.product_type}</span>`;
+  }
+  html += `</div>`;
+  
+  // Build details section
+  html += `<div style="margin-top:4px;font-size:12px;">`;
+  if(parsed.variant_info){
+    html += `Variant: ${parsed.variant_info}<br/>`;
+  }
+  if(parsed.order_id){
+    html += `Order: ${parsed.order_id}<br/>`;
+  }
+  html += `Scanner: ${ids.scanner_id}, Station: ${ids.station_id}<br/>`;
+  html += `Timestamp: ${timestamp}`;
+  html += `</div>`;
+
+  lastScanContent.innerHTML = html;
 
   if(status==="new" && navigator.vibrate) navigator.vibrate(60);
-
-  scanLog.textContent = status==="new" ? "Saved new scan." : "Updated scan.";
+  
+  // Show red warning for duplicate scans
+  if(isDuplicate){
+    showDuplicateWarning();
+    if(navigator.vibrate) navigator.vibrate([100, 50, 100]); // Double vibration for duplicate
+    scanLog.textContent = "⚠ DUPLICATE SCAN - Updated existing record.";
+  } else {
+    scanLog.textContent = "✓ Saved new scan.";
+  }
 }
 
 /* ===========
@@ -503,7 +761,11 @@ btnExport.onclick = ()=>{
   ];
   const dataRows = rows.map(uid=>{
     const r=db[uid];
-    return header.map(k=>k==="uid"?uid:r[k]||"");
+    // Handle backwards compatibility - older records may not have all fields
+    return header.map(k=>{
+      if(k==="uid") return uid;
+      return r[k] || "";
+    });
   });
 
   const csv = [
