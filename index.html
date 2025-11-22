@@ -620,8 +620,27 @@ function onDecoded(text){
 
   // Parse QR payload
   const parsed = parseQrPayload(text);
-  const ids = loadIds();
+  const uid = parsed.uid;
+  
+  // Check for duplicate FIRST, before any UI changes or processing
+  const db = loadStore();
+  const existingRecord = db[uid];
+  
+  if(existingRecord){
+    // It's a duplicate - show warning and exit without making ANY changes
+    console.log("⚠ DUPLICATE detected! UID:", uid, "Existing record:", existingRecord);
+    showDuplicateWarning();
+    if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
+    scanLog.textContent = "⚠ DUPLICATE SCAN - This QR code was already scanned. No changes made.";
+    // Exit immediately - don't change dropdowns, don't save, don't update any UI
+    return;
+  }
+  
+  console.log("✓ New scan detected. UID:", uid);
 
+  // Not a duplicate - proceed with normal processing
+  const ids = loadIds();
+  
   // Auto-set entity dropdown if entityFromQR matches an option
   if(parsed.entityFromQR && entitySelect){
     const options = Array.from(entitySelect.options);
@@ -663,30 +682,31 @@ function showDuplicateWarning(){
 }
 
 function processScan(parsed){
+  // Safety check for duplicate (should already be caught in onDecoded, but double-check)
   const ids = loadIds();
   const db = loadStore();
-
-  const timestamp = new Date().toISOString();
-  const stage = stageSelect.value;
-  const entity = entitySelect ? entitySelect.value : undefined;
   const uid = parsed.uid;
-  const product_id = parsed.product_id || uid;
 
-  // Check for duplicate FIRST - if duplicate, show warning and exit without saving
-  const isDuplicate = !!db[uid];
-  if(isDuplicate){
+  // Final duplicate check - if somehow we got here with a duplicate, abort
+  if(db[uid]){
+    console.error("ERROR: Duplicate somehow passed through to processScan! UID:", uid);
     showDuplicateWarning();
-    if(navigator.vibrate) navigator.vibrate([100, 50, 100]); // Double vibration for duplicate
+    if(navigator.vibrate) navigator.vibrate([100, 50, 100]);
     scanLog.textContent = "⚠ DUPLICATE SCAN - This QR code was already scanned. No changes made.";
     // Don't save anything, don't update Last scan panel, don't modify database
     return;
   }
 
   // Not a duplicate - proceed with saving new scan
+  console.log("Saving new scan for UID:", uid);
+  const timestamp = new Date().toISOString();
+  const stage = stageSelect.value;
+  const entity = entitySelect ? entitySelect.value : undefined;
+  const product_id = parsed.product_id || uid;
   const status = "new";
 
   // Store record with product metadata
-  db[uid] = {
+  const newRecord = {
     scanner_id: ids.scanner_id,
     station_id: ids.station_id,
     stage,
@@ -697,7 +717,16 @@ function processScan(parsed){
     variant_info: parsed.variant_info,
     order_id: parsed.order_id
   };
-
+  
+  // Double-check it's still not in DB before saving
+  if(db[uid]){
+    console.error("ERROR: Record appeared in DB between checks! Aborting save.");
+    showDuplicateWarning();
+    scanLog.textContent = "⚠ DUPLICATE SCAN - This QR code was already scanned. No changes made.";
+    return;
+  }
+  
+  db[uid] = newRecord;
   saveStore(db);
   renderHistory();
 
